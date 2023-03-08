@@ -1,1 +1,7 @@
+.nfs*
 *.apkovl.tar.gz
+overlay/etc/local.d/bootstrap.start
+overlay/etc/hostname
+overlay/root/.ssh/authorized_keys
+scratch/
+tmp/
