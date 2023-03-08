@@ -1,0 +1,69 @@
+#!/bin/sh -x
+
+VERSION="0.1"
+
+[ -f /etc/bootstrap-done ] && exit 0
+
+# Redirect stdout and errors to console as rc.local does not log anything
+exec 1>/dev/console 2>&1
+
+logger -st ${0##*/} "Alpine Linux bootstrap Docker for FreeBSD bhyve v$VERSION by brnrd"
+
+# ovlpath=$( find /media -type d -path '*/.*' -prune -o -type f -name *.apkovl.tar.gz -exec dirname {} \; | head -1 )
+
+echo "%%HOSTNAME%%" > /etc/hostname
+hostname -F /etc/hostname
+rc-service networking start
+
+setup-hostname %%HOSTNAME%%
+setup-timezone UTC
+# Auto choose repo (CDN) and use community (for NFS and docker)
+setup-apkrepos -c -1
+setup-sshd openssh
+# Clock from FreeBSD
+setup-ntp none
+
+# patch setup-disk, to prevent user-input block
+sed -i.bak 's/.*WARNING: Erase the above disk.s. and continue.*/return 0/' /sbin/setup-disk
+
+# Install to disk
+USE_EFI=yes \
+BOOT_SIZE=10 \
+SWAP_SIZE=0 \
+setup-disk -msys /dev/vda
+
+# Initialize swap
+mkswap -L swap /dev/vdb1
+
+# Mount sys volume for modding
+mount /dev/vda2 /mnt
+
+## Transfer some bits from apkovl to installed system
+cp -pR /root/.ssh /mnt/root/
+install -m 644 /etc/network/interfaces /mnt/etc/network/interfaces
+
+## Build customization file
+cat <<-EOF >> /mnt/postinstall.sh
+# Prep docker and NFS
+apk add nfs-utils docker
+install -d -m 0710 /var/lib/docker
+
+# Auto-start services
+rc-update add networking boot
+rc-update add netmount boot
+rc-update add docker default
+
+# Add mounts, docker start will add the required subdirs to /var/lib/docker
+echo "/dev/vdb1	none	swap	sw	0	0" >> /etc/fstab
+echo "%%NFSDOCKER%%	/var/lib/docker	nfs	nolock	0	0" >> /etc/fstab
+
+exit # chroot
+EOF
+
+# Execute our postinstall script
+chroot /mnt /bin/sh /postinstall.sh
+
+# Prevent re-execution and log
+date > /mnt/etc/bootstrap-done
+
+# make.sh can add reboot
